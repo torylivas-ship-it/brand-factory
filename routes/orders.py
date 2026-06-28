@@ -68,14 +68,14 @@ async def create_order(body: OrderCreateRequest):
 async def get_order(order_id: str):
     supabase = get_supabase_admin()
 
-    order = supabase.table("orders").select("*").eq("id", order_id).single().execute()
+    order = supabase.table("orders").select("*").eq("id", order_id).maybe_single().execute()
     if not order.data:
         raise HTTPException(status_code=404, detail="Order not found")
 
     result: dict = {"order": order.data}
 
     if order.data["status"] == "complete":
-        pack = supabase.table("packs").select("*").eq("order_id", order_id).single().execute()
+        pack = supabase.table("packs").select("*").eq("order_id", order_id).maybe_single().execute()
         if pack.data:
             result["pack"] = pack.data
 
@@ -86,7 +86,7 @@ async def get_order(order_id: str):
 async def trigger_generation(order_id: str, background_tasks: BackgroundTasks):
     """Manual trigger for pack generation (admin/testing use)."""
     supabase = get_supabase_admin()
-    order = supabase.table("orders").select("id, status").eq("id", order_id).single().execute()
+    order = supabase.table("orders").select("id, status").eq("id", order_id).maybe_single().execute()
     if not order.data:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.data["status"] not in ("pending", "failed"):

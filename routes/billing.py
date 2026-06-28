@@ -43,7 +43,7 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
         payment_intent = session.get("payment_intent")
         amount_total = session.get("amount_total")  # cents
 
-        order_result = supabase.table("orders").select("id, status").eq("stripe_session_id", session_id).single().execute()
+        order_result = supabase.table("orders").select("id, status").eq("stripe_session_id", session_id).maybe_single().execute()
 
         if order_result.data and order_result.data["status"] == "pending":
             order_id = order_result.data["id"]

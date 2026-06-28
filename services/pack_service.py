@@ -93,7 +93,7 @@ async def generate_pack(order_id: str) -> None:
     supabase = get_supabase_admin()
     start = time.time()
 
-    result = supabase.table("orders").select("*").eq("id", order_id).single().execute()
+    result = supabase.table("orders").select("*").eq("id", order_id).maybe_single().execute()
     if not result.data:
         return
 
