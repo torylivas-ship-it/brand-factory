@@ -1,12 +1,12 @@
 from fastapi import HTTPException, status
 
-PLAN_HIERARCHY = {"free": 0, "pro": 1, "agency": 2}
+PLAN_HIERARCHY = {"free": 0, "starter": 1, "growth": 2, "agency": 3}
 
 
 def check_plan(required_plan: str, user_plan: str) -> None:
     """
     Raises HTTP 403 if user_plan is below required_plan.
-    Plans: free < pro < agency
+    Plans: free < starter < growth < agency
     """
     required_level = PLAN_HIERARCHY.get(required_plan, 0)
     user_level = PLAN_HIERARCHY.get(user_plan, 0)

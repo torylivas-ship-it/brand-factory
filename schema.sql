@@ -12,7 +12,7 @@ create table if not exists public.profiles (
   email                 text not null,
   full_name             text,
   plan                  text not null default 'free'
-                          check (plan in ('free', 'pro', 'agency')),
+                          check (plan in ('free', 'starter', 'growth', 'agency')),
   stripe_customer_id    text unique,
   stripe_subscription_id text,
   plan_expires_at       timestamptz,
@@ -169,3 +169,64 @@ create policy "Admins can view all exports"
 create policy "No direct user access to stripe_events"
   on public.stripe_events for all
   using (false);
+
+-- ── orders ──
+create table if not exists public.orders (
+  id                    uuid primary key default uuid_generate_v4(),
+  email                 text not null,
+  business_name         text not null,
+  business_type         text not null,
+  city                  text not null,
+  neighborhood          text,
+  target_audience       text not null,
+  platforms             text[] not null,
+  tone                  text not null,
+  special_offers        text,
+  goals                 text,
+  tier                  text not null check (tier in ('starter', 'growth', 'agency')),
+  status                text not null default 'pending' check (status in ('pending', 'generating', 'complete', 'failed')),
+  stripe_session_id     text unique,
+  stripe_payment_intent text,
+  amount_paid           integer,
+  paid_at               timestamptz,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+create index if not exists orders_user_id_idx on public.orders(email);
+create index if not exists orders_stripe_session_idx on public.orders(stripe_session_id);
+
+-- ── packs ──
+create table if not exists public.packs (
+  id                        uuid primary key default uuid_generate_v4(),
+  order_id                  uuid not null references public.orders(id) on delete cascade,
+  strategy_overview         text,
+  content_calendar          jsonb,
+  captions                  jsonb,
+  hashtag_groups            jsonb,
+  posting_schedule          jsonb,
+  website_html              text,
+  generation_time_seconds   integer,
+  created_at                timestamptz not null default now()
+);
+create index if not exists packs_order_id_idx on public.packs(order_id);
+
+-- Auto-update packs.updated_at
+create trigger set_packs_updated_at
+  before update on public.packs
+  for each row execute function public.handle_updated_at();
+
+-- ── Row Level Security ──
+alter table public.orders enable row level security;
+alter table public.packs enable row level security;
+
+-- orders: public-facing, allow viewing own orders
+create policy "Users can view own orders" on public.orders
+  for select using (true); -- public-facing, backend uses service_role to bypass
+
+-- packs: only accessible via owner's order
+create policy "Users can view own packs" on public.packs
+  for select using (
+    exists (select 1 from public.orders o where o.id = packs.order_id)
+  );
+
+-- Backend uses service role key — bypasses all RLS

@@ -36,13 +36,14 @@ async def get_stats(admin: dict = Depends(require_admin)):
     supabase = get_supabase_admin()
 
     profiles = supabase.table("profiles").select("plan").execute()
-    plan_counts: dict[str, int] = {"free": 0, "pro": 0, "agency": 0}
+    plan_counts: dict[str, int] = {"free": 0, "starter": 0, "growth": 0, "agency": 0}
     for p in (profiles.data or []):
         plan = p.get("plan", "free")
         plan_counts[plan] = plan_counts.get(plan, 0) + 1
 
-    # Rough MRR estimate (assumes all subscriptions are monthly at list prices)
-    mrr_estimate = (plan_counts.get("pro", 0) * 29) + (plan_counts.get("agency", 0) * 79)
+    # One-time revenue estimate (Starter $49, Growth $99, Agency $149)
+    tier_prices = {"starter": 49, "growth": 99, "agency": 149}
+    total_revenue = sum(plan_counts.get(tier, 0) * price for tier, price in tier_prices.items())
 
     projects = supabase.table("projects").select("id").execute()
     exports = supabase.table("exports").select("id").execute()
@@ -50,7 +51,7 @@ async def get_stats(admin: dict = Depends(require_admin)):
     return {
         "total_users": len(profiles.data or []),
         "plan_breakdown": plan_counts,
-        "mrr_estimate_usd": mrr_estimate,
+        "total_revenue_usd": total_revenue,
         "total_projects": len(projects.data or []),
         "total_exports": len(exports.data or []),
     }

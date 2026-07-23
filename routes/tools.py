@@ -53,10 +53,10 @@ async def generate_website(
     current_user: dict = Depends(get_current_user),
 ):
     plan = current_user["plan"]
-    is_pro = plan in ("pro", "agency")
+    is_growth = plan in ("growth", "agency")
 
-    # Build HTML — watermarked for free users, full for pro+
-    html = _build_html(body, watermark=not is_pro)
+    # Build HTML — watermarked for free/starter users, exportable for growth+
+    html = _build_html(body, watermark=not is_growth)
     css = _build_css(body.color_scheme)
 
     project_content = {
@@ -76,14 +76,14 @@ async def generate_website(
         "user_id": current_user["user_id"],
         "name": body.business_name,
         "type": "website",
-        "status": "preview" if is_pro else "draft",
+        "status": "preview" if is_growth else "draft",
         "content": project_content,
     }).execute()
 
     return {
         "project_id": project_id,
         "plan": plan,
-        "watermarked": not is_pro,
+        "watermarked": not is_growth,
         "html": html,
         "css": css,
     }
@@ -94,7 +94,7 @@ async def export_website(
     body: WebsiteExportRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    check_plan("pro", current_user["plan"])
+    check_plan("growth", current_user["plan"])
 
     supabase = get_supabase_admin()
     result = (
@@ -138,7 +138,7 @@ async def generate_social_post(
     body: SocialPostRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    check_plan("pro", current_user["plan"])
+    check_plan("growth", current_user["plan"])
     post_text = await openai_service.generate_social_post(
         body.platform, body.topic, body.tone, body.business_name
     )
@@ -153,7 +153,7 @@ async def generate_hashtags(
     body: HashtagRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    check_plan("pro", current_user["plan"])
+    check_plan("growth", current_user["plan"])
     tags = await openai_service.generate_hashtags(body.niche, body.topic, body.count)
     return {"hashtags": tags, "count": len(tags)}
 
@@ -166,7 +166,7 @@ async def generate_branding(
     body: BrandingRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    check_plan("pro", current_user["plan"])
+    check_plan("growth", current_user["plan"])
     branding = await openai_service.generate_branding(body.category, body.keywords, body.vibe)
     return branding
 
@@ -206,10 +206,10 @@ footer {{ text-align: center; padding: 2rem; background: #111; color: #666; font
 
 def _build_html(body: WebsiteGenerateRequest, watermark: bool) -> str:
     color = _resolve_primary(body.color_scheme)
-    watermark_comment = "<!-- WATERMARK: Upgrade to Pro to remove this watermark -->" if watermark else ""
+    watermark_comment = "<!-- WATERMARK: Upgrade to Growth to remove this watermark -->" if watermark else ""
     watermark_banner = (
         '<div style="background:#c9a84c;color:#0d0d0d;text-align:center;padding:0.5rem;font-size:0.8rem;font-weight:700;">'
-        "Preview only — <a href='/pricing' style='color:#0d0d0d;'>Upgrade to Pro</a> to export this site"
+        "Preview only — <a href='/pricing' style='color:#0d0d0d;'>Upgrade to Growth</a> to export this site"
         "</div>"
         if watermark
         else ""

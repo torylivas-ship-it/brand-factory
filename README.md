@@ -5,7 +5,7 @@ FastAPI backend powering The Brand Factory NOLA SaaS platform.
 ## Stack
 - **FastAPI** + Uvicorn
 - **Supabase** — auth, database, RLS
-- **Stripe** — subscriptions + webhooks
+- **Stripe** — one-time purchases (Starter $49, Growth $99, Agency $149)
 - **OpenAI** (gpt-4o-mini) — AI tools
 
 ## Quick Start
