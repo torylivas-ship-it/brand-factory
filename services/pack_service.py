@@ -4,6 +4,7 @@ import os
 from openai import AsyncOpenAI
 
 from services.supabase_service import get_supabase_admin
+from services.email_service import send_pack_ready_email
 
 _client: AsyncOpenAI | None = None
 
@@ -128,6 +129,8 @@ async def generate_pack(order_id: str, billing_period: int = 0) -> None:
         # already complete from the initial delivery; only the first pack sets it.
         if not is_recurring_renewal:
             supabase.table("orders").update({"status": "complete"}).eq("id", order_id).execute()
+
+        await send_pack_ready_email(order, is_renewal=is_recurring_renewal)
 
     except Exception:
         if not is_recurring_renewal:

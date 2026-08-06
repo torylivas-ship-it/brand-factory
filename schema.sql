@@ -183,10 +183,11 @@ create table if not exists public.orders (
   tone                  text not null,
   special_offers        text,
   goals                 text,
-  tier                  text not null check (tier in ('starter', 'growth', 'agency')),
+  tier                  text not null check (tier in ('starter', 'growth', 'agency', 'agency_ongoing')),
   status                text not null default 'pending' check (status in ('pending', 'generating', 'complete', 'failed')),
   stripe_session_id     text unique,
   stripe_payment_intent text,
+  stripe_subscription_id text,
   amount_paid           integer,
   paid_at               timestamptz,
   created_at            timestamptz not null default now(),
@@ -199,6 +200,7 @@ create index if not exists orders_stripe_session_idx on public.orders(stripe_ses
 create table if not exists public.packs (
   id                        uuid primary key default uuid_generate_v4(),
   order_id                  uuid not null references public.orders(id) on delete cascade,
+  billing_period            integer not null default 0, -- 0 = initial pack, 1+ = monthly renewal for agency_ongoing
   strategy_overview         text,
   content_calendar          jsonb,
   captions                  jsonb,
@@ -206,7 +208,8 @@ create table if not exists public.packs (
   posting_schedule          jsonb,
   website_html              text,
   generation_time_seconds   integer,
-  created_at                timestamptz not null default now()
+  created_at                timestamptz not null default now(),
+  unique (order_id, billing_period)
 );
 create index if not exists packs_order_id_idx on public.packs(order_id);
 
