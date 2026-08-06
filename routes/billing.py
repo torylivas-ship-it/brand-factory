@@ -41,6 +41,7 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
         session = event["data"]["object"]
         session_id = session["id"]
         payment_intent = session.get("payment_intent")
+        subscription_id = session.get("subscription")
         amount_total = session.get("amount_total")  # cents
 
         order_result = supabase.table("orders").select("id, status").eq("stripe_session_id", session_id).maybe_single().execute()
@@ -52,11 +53,40 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
             supabase.table("orders").update({
                 "status": "generating",
                 "stripe_payment_intent": payment_intent,
+                "stripe_subscription_id": subscription_id,
                 "amount_paid": amount_total,
                 "paid_at": paid_at,
             }).eq("id", order_id).execute()
 
             background_tasks.add_task(generate_pack, order_id)
+
+    elif event["type"] == "invoice.paid":
+        invoice = event["data"]["object"]
+        # Only monthly renewals trigger a new pack — the first invoice of a new
+        # subscription (billing_reason=subscription_create) is already handled
+        # above by checkout.session.completed, and generating again here would
+        # double-charge no money but would waste an OpenAI generation.
+        if invoice.get("billing_reason") == "subscription_cycle":
+            subscription_id = invoice.get("subscription")
+            order_result = (
+                supabase.table("orders")
+                .select("id, tier, status")
+                .eq("stripe_subscription_id", subscription_id)
+                .maybe_single()
+                .execute()
+            )
+            if order_result.data and order_result.data["tier"] == "agency_ongoing":
+                order_id = order_result.data["id"]
+                latest = (
+                    supabase.table("packs")
+                    .select("billing_period")
+                    .eq("order_id", order_id)
+                    .order("billing_period", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                next_period = (latest.data[0]["billing_period"] + 1) if latest.data else 1
+                background_tasks.add_task(generate_pack, order_id, next_period)
 
     supabase.table("stripe_events").update({"processed": True}).eq("stripe_event_id", event_id).execute()
     return {"status": "ok"}

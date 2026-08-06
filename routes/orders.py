@@ -23,13 +23,16 @@ class OrderCreateRequest(BaseModel):
     tone: str
     special_offers: Optional[str] = None
     goals: Optional[str] = None
-    tier: str  # starter | growth | agency
+    tier: str  # starter | growth | agency | agency_ongoing
+
+
+VALID_TIERS = ("starter", "growth", "agency", "agency_ongoing")
 
 
 @router.post("/create")
 async def create_order(body: OrderCreateRequest):
-    if body.tier not in ("starter", "growth", "agency"):
-        raise HTTPException(status_code=400, detail="tier must be starter, growth, or agency")
+    if body.tier not in VALID_TIERS:
+        raise HTTPException(status_code=400, detail=f"tier must be one of {', '.join(VALID_TIERS)}")
 
     supabase = get_supabase_admin()
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -75,9 +78,16 @@ async def get_order(order_id: str):
     result: dict = {"order": order.data}
 
     if order.data["status"] == "complete":
-        pack = supabase.table("packs").select("*").eq("order_id", order_id).maybe_single().execute()
-        if pack.data:
-            result["pack"] = pack.data
+        packs = (
+            supabase.table("packs")
+            .select("*")
+            .eq("order_id", order_id)
+            .order("billing_period", desc=True)
+            .execute()
+        )
+        if packs.data:
+            result["pack"] = packs.data[0]  # most recent, for existing frontend code
+            result["packs"] = packs.data    # full history, newest first
 
     return result
 

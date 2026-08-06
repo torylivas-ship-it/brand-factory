@@ -17,6 +17,7 @@ TIER_CONFIG = {
     "starter": {"calendar_days": 14, "caption_count": 14, "hashtag_groups": 3},
     "growth":  {"calendar_days": 30, "caption_count": 20, "hashtag_groups": 5},
     "agency":  {"calendar_days": 30, "caption_count": 30, "hashtag_groups": 8},
+    "agency_ongoing": {"calendar_days": 30, "caption_count": 30, "hashtag_groups": 8},
 }
 
 
@@ -89,7 +90,7 @@ async def _generate_website(order: dict) -> str:
     return response.choices[0].message.content.strip()
 
 
-async def generate_pack(order_id: str) -> None:
+async def generate_pack(order_id: str, billing_period: int = 0) -> None:
     supabase = get_supabase_admin()
     start = time.time()
 
@@ -99,18 +100,21 @@ async def generate_pack(order_id: str) -> None:
 
     order = result.data
     cfg = TIER_CONFIG.get(order["tier"], TIER_CONFIG["starter"])
+    is_recurring_renewal = order["tier"] == "agency_ongoing" and billing_period > 0
 
     try:
         main = await _generate_main(order, cfg)
 
+        # Website is generated once, on the initial pack, not on every monthly renewal.
         website_html = None
-        if order["tier"] == "agency":
+        if order["tier"] in ("agency", "agency_ongoing") and billing_period == 0:
             website_html = await _generate_website(order)
 
         elapsed = int(time.time() - start)
 
         supabase.table("packs").insert({
             "order_id": order_id,
+            "billing_period": billing_period,
             "strategy_overview": main.get("strategy_overview"),
             "content_calendar": main.get("content_calendar"),
             "captions": main.get("captions"),
@@ -120,8 +124,12 @@ async def generate_pack(order_id: str) -> None:
             "generation_time_seconds": elapsed,
         }).execute()
 
-        supabase.table("orders").update({"status": "complete"}).eq("id", order_id).execute()
+        # A recurring renewal shouldn't downgrade the order's overall status if it's
+        # already complete from the initial delivery; only the first pack sets it.
+        if not is_recurring_renewal:
+            supabase.table("orders").update({"status": "complete"}).eq("id", order_id).execute()
 
     except Exception:
-        supabase.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
+        if not is_recurring_renewal:
+            supabase.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
         raise
