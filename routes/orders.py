@@ -94,13 +94,24 @@ async def get_order(order_id: str):
 
 @router.post("/{order_id}/generate")
 async def trigger_generation(order_id: str, background_tasks: BackgroundTasks):
-    """Manual trigger for pack generation (admin/testing use)."""
+    """Manual retry for pack generation after a failed OpenAI call. Requires the
+    order to already show proof of real Stripe payment (set by the webhook) —
+    without this check, anyone could create an unpaid order and call this
+    directly to get a free AI-generated pack."""
     supabase = get_supabase_admin()
-    order = supabase.table("orders").select("id, status").eq("id", order_id).maybe_single().execute()
+    order = (
+        supabase.table("orders")
+        .select("id, status, stripe_payment_intent, stripe_subscription_id")
+        .eq("id", order_id)
+        .maybe_single()
+        .execute()
+    )
     if not order.data:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.data["status"] not in ("pending", "failed"):
         raise HTTPException(status_code=400, detail=f"Order status is {order.data['status']}, cannot regenerate")
+    if not order.data["stripe_payment_intent"] and not order.data["stripe_subscription_id"]:
+        raise HTTPException(status_code=402, detail="No confirmed payment on this order")
 
     supabase.table("orders").update({"status": "generating"}).eq("id", order_id).execute()
     background_tasks.add_task(generate_pack, order_id)
