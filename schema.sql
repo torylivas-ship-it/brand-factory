@@ -208,7 +208,7 @@ create table if not exists public.packs (
   posting_schedule          jsonb,
   website_html              text,
   generation_time_seconds   integer,
-  created_at                timestamptz not null default now(),
+  generated_at              timestamptz not null default now(),
   unique (order_id, billing_period)
 );
 create index if not exists packs_order_id_idx on public.packs(order_id);
