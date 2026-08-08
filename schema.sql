@@ -222,14 +222,28 @@ create trigger set_packs_updated_at
 alter table public.orders enable row level security;
 alter table public.packs enable row level security;
 
--- orders: public-facing, allow viewing own orders
-create policy "Users can view own orders" on public.orders
-  for select using (true); -- public-facing, backend uses service_role to bypass
+-- orders: signed-in users can only see their own (guest/anon orders are
+-- looked up by order_id through the backend's service-role key, never
+-- directly by the browser — anon has NO grants on this table at all).
+create policy "users read own orders" on public.orders
+  for select using (auth.uid() = user_id);
 
--- packs: only accessible via owner's order
-create policy "Users can view own packs" on public.packs
+create policy "service role full access orders" on public.orders
+  for all using (auth.role() = 'service_role');
+
+-- packs: only via the owning order's user_id
+create policy "users read own packs" on public.packs
   for select using (
-    exists (select 1 from public.orders o where o.id = packs.order_id)
+    exists (select 1 from public.orders where orders.id = packs.order_id and orders.user_id = auth.uid())
   );
 
--- Backend uses service role key — bypasses all RLS
+create policy "service role full access packs" on public.packs
+  for all using (auth.role() = 'service_role');
+
+-- Lock down direct client access: only the backend (service role) writes to
+-- these tables. Authenticated users get read-only access to their own rows
+-- via the RLS policies above; anon gets nothing.
+revoke insert, update, delete, truncate on public.orders from anon, authenticated;
+revoke insert, update, delete, truncate on public.packs from anon, authenticated;
+revoke select on public.orders from anon;
+revoke select on public.packs from anon;

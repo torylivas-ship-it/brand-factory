@@ -2,12 +2,13 @@ import uuid
 import os
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
 
 from services.supabase_service import get_supabase_admin
 from services import stripe_service
 from services.pack_service import generate_pack
+from middleware.auth_guard import get_current_user_optional
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ VALID_TIERS = ("starter", "growth", "agency", "agency_ongoing")
 
 
 @router.post("/create")
-async def create_order(body: OrderCreateRequest):
+async def create_order(body: OrderCreateRequest, current_user: dict | None = Depends(get_current_user_optional)):
     if body.tier not in VALID_TIERS:
         raise HTTPException(status_code=400, detail=f"tier must be one of {', '.join(VALID_TIERS)}")
 
@@ -40,6 +41,7 @@ async def create_order(body: OrderCreateRequest):
     order_id = str(uuid.uuid4())
     supabase.table("orders").insert({
         "id": order_id,
+        "user_id": current_user["user_id"] if current_user else None,
         "email": body.email,
         "business_name": body.business_name,
         "business_type": body.business_type,
