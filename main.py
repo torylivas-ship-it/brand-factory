@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routes import orders, billing, account
+from routes import orders, billing, account, social_oauth
 
 load_dotenv()
 
@@ -26,6 +26,7 @@ app.add_middleware(
 app.include_router(orders.router, prefix="/orders", tags=["orders"])
 app.include_router(billing.router, prefix="/billing", tags=["billing"])
 app.include_router(account.router, prefix="/account", tags=["account"])
+app.include_router(social_oauth.router, prefix="/auth", tags=["oauth"])
 
 
 @app.get("/", tags=["health"])
