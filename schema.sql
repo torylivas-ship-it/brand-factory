@@ -18,6 +18,8 @@ create table if not exists public.profiles (
   plan_expires_at       timestamptz,
   is_lifetime           boolean not null default false,
   is_admin              boolean not null default false,
+  is_employee           boolean not null default false,
+  referral_code         text unique,
   created_at            timestamptz not null default now(),
   updated_at            timestamptz not null default now()
 );
@@ -185,6 +187,7 @@ create table if not exists public.orders (
   goals                 text,
   tier                  text not null check (tier in ('starter', 'growth', 'agency', 'agency_ongoing')),
   status                text not null default 'pending' check (status in ('pending', 'generating', 'complete', 'failed')),
+  referred_by_employee_id uuid references public.profiles(id) on delete set null,
   stripe_session_id     text unique,
   stripe_payment_intent text,
   stripe_subscription_id text,

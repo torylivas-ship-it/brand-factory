@@ -25,6 +25,7 @@ class OrderCreateRequest(BaseModel):
     special_offers: Optional[str] = None
     goals: Optional[str] = None
     tier: str  # starter | growth | agency | agency_ongoing
+    referral_code: Optional[str] = None
 
 
 VALID_TIERS = ("starter", "growth", "agency", "agency_ongoing")
@@ -38,10 +39,25 @@ async def create_order(body: OrderCreateRequest, current_user: dict | None = Dep
     supabase = get_supabase_admin()
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
+    referred_by_employee_id = None
+    if body.referral_code:
+        employee = (
+            supabase.table("profiles")
+            .select("id")
+            .eq("referral_code", body.referral_code)
+            .eq("is_employee", True)
+            .maybe_single()
+            .execute()
+        )
+        if employee.data:
+            referred_by_employee_id = employee.data["id"]
+        # An unrecognized code just means no attribution — never block checkout over it.
+
     order_id = str(uuid.uuid4())
     supabase.table("orders").insert({
         "id": order_id,
         "user_id": current_user["user_id"] if current_user else None,
+        "referred_by_employee_id": referred_by_employee_id,
         "email": body.email,
         "business_name": body.business_name,
         "business_type": body.business_type,

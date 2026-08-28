@@ -12,7 +12,11 @@ def _verify(token: str) -> dict | None:
     to validate it (supabase.auth.get_user), rather than decoding the JWT
     locally — avoids ever needing to handle the signing secret ourselves,
     and avoids the classic verify_signature=False bug where any forged
-    token would be accepted."""
+    token would be accepted.
+
+    Also fetches the matching profiles row so plan/is_admin/is_employee/
+    referral_code are actually available on current_user — auth.users itself
+    has none of those, they only live in profiles."""
     supabase = get_supabase_admin()
     try:
         result = supabase.auth.get_user(token)
@@ -20,7 +24,20 @@ def _verify(token: str) -> dict | None:
         return None
     if not result or not result.user:
         return None
-    return {"user_id": result.user.id, "email": result.user.email}
+
+    user_id = result.user.id
+    email = result.user.email
+
+    profile = (
+        supabase.table("profiles")
+        .select("full_name, plan, is_admin, is_employee, referral_code")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    profile_data = profile.data or {}
+
+    return {"user_id": user_id, "email": email, **profile_data}
 
 
 async def get_current_user(

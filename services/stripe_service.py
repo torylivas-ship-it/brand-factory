@@ -77,6 +77,7 @@ def _create_subscription_checkout_session(
             {"price": recurring_price_id, "quantity": 1},
         ],
         mode="subscription",
+        allow_promotion_codes=True,
         subscription_data={
             "trial_period_days": RECURRING_TRIAL_DAYS,
             "metadata": {"order_id": order_id, "tier": tier},
