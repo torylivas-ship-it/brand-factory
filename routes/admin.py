@@ -105,7 +105,7 @@ async def create_employee(body: CreateEmployeeRequest, admin: dict = Depends(req
         .maybe_single()
         .execute()
     )
-    if not profile.data:
+    if not profile or not profile.data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No account found for that email — they need to sign up at /auth first.",
@@ -130,7 +130,7 @@ async def create_employee(body: CreateEmployeeRequest, admin: dict = Depends(req
             .maybe_single()
             .execute()
         )
-        if not clash.data:
+        if not clash or not clash.data:
             break
         code = f"{base_code}-{secrets.token_hex(2)}"
     else:

@@ -35,7 +35,11 @@ def _verify(token: str) -> dict | None:
         .maybe_single()
         .execute()
     )
-    profile_data = profile.data or {}
+    # maybe_single().execute() returns None outright (not a response with
+    # .data = None) when zero rows match — e.g. a valid auth token whose
+    # profiles row hasn't landed yet from the on-signup trigger.
+    profile_data = profile.data if profile else {}
+    profile_data = profile_data or {}
 
     return {"user_id": user_id, "email": email, **profile_data}
 

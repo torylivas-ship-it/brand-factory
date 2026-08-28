@@ -49,7 +49,7 @@ async def create_order(body: OrderCreateRequest, current_user: dict | None = Dep
             .maybe_single()
             .execute()
         )
-        if employee.data:
+        if employee and employee.data:
             referred_by_employee_id = employee.data["id"]
         # An unrecognized code just means no attribution — never block checkout over it.
 
@@ -90,7 +90,7 @@ async def get_order(order_id: str):
     supabase = get_supabase_admin()
 
     order = supabase.table("orders").select("*").eq("id", order_id).maybe_single().execute()
-    if not order.data:
+    if not order or not order.data:
         raise HTTPException(status_code=404, detail="Order not found")
 
     result: dict = {"order": order.data}
@@ -124,7 +124,7 @@ async def trigger_generation(order_id: str, background_tasks: BackgroundTasks):
         .maybe_single()
         .execute()
     )
-    if not order.data:
+    if not order or not order.data:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.data["status"] not in ("pending", "failed"):
         raise HTTPException(status_code=400, detail=f"Order status is {order.data['status']}, cannot regenerate")

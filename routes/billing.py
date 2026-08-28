@@ -46,7 +46,7 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
 
         order_result = supabase.table("orders").select("id, status").eq("stripe_session_id", session_id).maybe_single().execute()
 
-        if order_result.data and order_result.data["status"] == "pending":
+        if order_result and order_result.data and order_result.data["status"] == "pending":
             order_id = order_result.data["id"]
             paid_at = datetime.now(timezone.utc).isoformat()
 
@@ -75,7 +75,7 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
                 .maybe_single()
                 .execute()
             )
-            if order_result.data and order_result.data["tier"] == "agency_ongoing":
+            if order_result and order_result.data and order_result.data["tier"] == "agency_ongoing":
                 order_id = order_result.data["id"]
                 latest = (
                     supabase.table("packs")

@@ -96,7 +96,7 @@ async def generate_pack(order_id: str, billing_period: int = 0) -> None:
     start = time.time()
 
     result = supabase.table("orders").select("*").eq("id", order_id).maybe_single().execute()
-    if not result.data:
+    if not result or not result.data:
         return
 
     order = result.data
