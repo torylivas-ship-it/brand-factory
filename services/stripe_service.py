@@ -86,3 +86,39 @@ def _create_subscription_checkout_session(
         cancel_url=cancel_url,
         metadata={"order_id": order_id, "tier": tier},
     )
+
+
+def create_ops_checkout_session(
+    ops_order_id: str,
+    email: str,
+    success_url: str,
+    cancel_url: str,
+) -> stripe.checkout.Session:
+    """BFN Ops: $149 setup due now, $49/mo starting after a 30-day setup
+    window — same one-time-plus-recurring-subscription shape as Agency
+    Ongoing, just against BFN Ops's own prices and its own product metadata
+    so the webhook can route it to ops_orders instead of orders."""
+    _init()
+    setup_price_id = os.getenv("STRIPE_PRICE_OPS_SETUP")
+    monthly_price_id = os.getenv("STRIPE_PRICE_OPS_MONTHLY")
+    if not setup_price_id:
+        raise RuntimeError("Env var STRIPE_PRICE_OPS_SETUP is not set")
+    if not monthly_price_id:
+        raise RuntimeError("Env var STRIPE_PRICE_OPS_MONTHLY is not set")
+
+    return stripe.checkout.Session.create(
+        customer_email=email,
+        payment_method_types=["card"],
+        line_items=[
+            {"price": setup_price_id, "quantity": 1},
+            {"price": monthly_price_id, "quantity": 1},
+        ],
+        mode="subscription",
+        subscription_data={
+            "trial_period_days": RECURRING_TRIAL_DAYS,
+            "metadata": {"ops_order_id": ops_order_id, "product": "bfn_ops"},
+        },
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={"ops_order_id": ops_order_id, "product": "bfn_ops"},
+    )

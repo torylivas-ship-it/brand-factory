@@ -43,22 +43,42 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
         payment_intent = session.get("payment_intent")
         subscription_id = session.get("subscription")
         amount_total = session.get("amount_total")  # cents
+        product = (session.get("metadata") or {}).get("product")
 
-        order_result = supabase.table("orders").select("id, status").eq("stripe_session_id", session_id).maybe_single().execute()
+        if product == "bfn_ops":
+            ops_result = supabase.table("ops_orders").select("id, status").eq("stripe_session_id", session_id).maybe_single().execute()
 
-        if order_result and order_result.data and order_result.data["status"] == "pending":
-            order_id = order_result.data["id"]
-            paid_at = datetime.now(timezone.utc).isoformat()
+            if ops_result and ops_result.data and ops_result.data["status"] == "pending":
+                ops_order_id = ops_result.data["id"]
+                paid_at = datetime.now(timezone.utc).isoformat()
 
-            supabase.table("orders").update({
-                "status": "generating",
-                "stripe_payment_intent": payment_intent,
-                "stripe_subscription_id": subscription_id,
-                "amount_paid": amount_total,
-                "paid_at": paid_at,
-            }).eq("id", order_id).execute()
+                supabase.table("ops_orders").update({
+                    "status": "active",
+                    "stripe_subscription_id": subscription_id,
+                    "amount_paid": amount_total,
+                    "paid_at": paid_at,
+                }).eq("id", ops_order_id).execute()
+        else:
+            order_result = supabase.table("orders").select("id, status").eq("stripe_session_id", session_id).maybe_single().execute()
 
-            background_tasks.add_task(generate_pack, order_id)
+            if order_result and order_result.data and order_result.data["status"] == "pending":
+                order_id = order_result.data["id"]
+                paid_at = datetime.now(timezone.utc).isoformat()
+
+                supabase.table("orders").update({
+                    "status": "generating",
+                    "stripe_payment_intent": payment_intent,
+                    "stripe_subscription_id": subscription_id,
+                    "amount_paid": amount_total,
+                    "paid_at": paid_at,
+                }).eq("id", order_id).execute()
+
+                background_tasks.add_task(generate_pack, order_id)
+
+    elif event["type"] == "customer.subscription.deleted":
+        subscription = event["data"]["object"]
+        subscription_id = subscription["id"]
+        supabase.table("ops_orders").update({"status": "canceled"}).eq("stripe_subscription_id", subscription_id).execute()
 
     elif event["type"] == "invoice.paid":
         invoice = event["data"]["object"]

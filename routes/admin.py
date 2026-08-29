@@ -63,12 +63,22 @@ async def get_stats(admin: dict = Depends(require_admin)):
     projects = supabase.table("projects").select("id").execute()
     exports = supabase.table("exports").select("id").execute()
 
+    ops_active = (
+        supabase.table("ops_orders")
+        .select("id", count="exact")
+        .eq("status", "active")
+        .execute()
+    )
+    ops_active_count = ops_active.count or 0
+
     return {
         "total_users": len(profiles.data or []),
         "plan_breakdown": plan_counts,
         "total_revenue_usd": total_revenue,
         "total_projects": len(projects.data or []),
         "total_exports": len(exports.data or []),
+        "ops_active_count": ops_active_count,
+        "ops_mrr_usd": ops_active_count * 29,
     }
 
 
@@ -165,13 +175,31 @@ async def get_referrals(admin: dict = Depends(require_admin)):
         .execute()
     )
 
+    # BFN Ops is a separate product/table, but a referred sale there earns
+    # the same 25% commission on the same terms (upfront $149 setup only,
+    # not the $49/mo) — merged into the same per-employee totals below.
+    ops_orders = (
+        supabase.table("ops_orders")
+        .select("business_name, amount_paid, paid_at, referred_by_employee_id")
+        .not_.is_("referred_by_employee_id", "null")
+        .not_.is_("paid_at", "null")
+        .order("paid_at", desc=True)
+        .execute()
+    )
+
     orders_by_employee: dict[str, list] = {}
     for o in (orders.data or []):
-        orders_by_employee.setdefault(o["referred_by_employee_id"], []).append(o)
+        orders_by_employee.setdefault(o["referred_by_employee_id"], []).append(
+            {**o, "product": "Content Pack"}
+        )
+    for o in (ops_orders.data or []):
+        orders_by_employee.setdefault(o["referred_by_employee_id"], []).append(
+            {**o, "tier": "BFN Ops", "product": "BFN Ops"}
+        )
 
     results = []
     for e in (employees.data or []):
-        emp_orders = orders_by_employee.get(e["id"], [])
+        emp_orders = sorted(orders_by_employee.get(e["id"], []), key=lambda o: o["paid_at"], reverse=True)
         total_revenue_cents = sum(o["amount_paid"] or 0 for o in emp_orders)
         total_commission_cents = round(total_revenue_cents * COMMISSION_RATE)
 
@@ -183,6 +211,7 @@ async def get_referrals(admin: dict = Depends(require_admin)):
             "referred_sales": [
                 {
                     "business_name": o["business_name"],
+                    "product": o["product"],
                     "tier": o["tier"],
                     "amount_paid_usd": round((o["amount_paid"] or 0) / 100, 2),
                     "commission_usd": round((o["amount_paid"] or 0) * COMMISSION_RATE / 100, 2),

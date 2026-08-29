@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routes import orders, billing, account, social_oauth, admin, auth
+from routes import orders, billing, account, social_oauth, admin, auth, ops
 
 load_dotenv()
 
@@ -29,6 +29,7 @@ app.include_router(account.router, prefix="/account", tags=["account"])
 app.include_router(social_oauth.router, prefix="/auth", tags=["oauth"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(ops.router, prefix="/ops", tags=["ops"])
 
 
 @app.get("/", tags=["health"])
