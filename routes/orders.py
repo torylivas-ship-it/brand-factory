@@ -87,6 +87,11 @@ async def create_order(body: OrderCreateRequest, current_user: dict | None = Dep
 
 @router.get("/{order_id}")
 async def get_order(order_id: str):
+    try:
+        uuid.UUID(order_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Order not found")
+
     supabase = get_supabase_admin()
 
     order = supabase.table("orders").select("*").eq("id", order_id).maybe_single().execute()
@@ -116,6 +121,11 @@ async def trigger_generation(order_id: str, background_tasks: BackgroundTasks):
     order to already show proof of real Stripe payment (set by the webhook) —
     without this check, anyone could create an unpaid order and call this
     directly to get a free AI-generated pack."""
+    try:
+        uuid.UUID(order_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Order not found")
+
     supabase = get_supabase_admin()
     order = (
         supabase.table("orders")

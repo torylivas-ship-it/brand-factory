@@ -83,6 +83,11 @@ async def create_ops_order(body: OpsOrderCreateRequest):
 
 @router.get("/{ops_order_id}")
 async def get_ops_order(ops_order_id: str):
+    try:
+        uuid.UUID(ops_order_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Ops order not found")
+
     supabase = get_supabase_admin()
     order = supabase.table("ops_orders").select("*").eq("id", ops_order_id).maybe_single().execute()
     if not order or not order.data:
