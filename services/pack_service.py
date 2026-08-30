@@ -61,7 +61,13 @@ Make all content specific to {order['city']} and the local community. Return onl
             {"role": "user", "content": prompt},
         ],
         temperature=0.7,
-        max_tokens=4000,
+        # Confirmed live: 4000 was too tight for the Agency/Agency Ongoing
+        # tier's full 30-day calendar + 30 captions + 8x15 hashtags — a real
+        # order was truncated mid-JSON-string, causing json.loads to fail
+        # with "Unterminated string". 8000 gives real headroom (gpt-4o
+        # supports well beyond this in output tokens) rather than a marginal
+        # bump that could still clip the largest tier occasionally.
+        max_tokens=8000,
         response_format={"type": "json_object"},
     )
     return json.loads(response.choices[0].message.content)
