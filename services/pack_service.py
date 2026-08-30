@@ -1,6 +1,7 @@
 import json
 import time
 import os
+import traceback
 from openai import AsyncOpenAI
 
 from services.supabase_service import get_supabase_admin
@@ -149,6 +150,12 @@ async def generate_pack(order_id: str, billing_period: int = 0) -> None:
         await send_pack_ready_email(order, is_renewal=is_recurring_renewal)
 
     except Exception:
+        # Background task exceptions in FastAPI/Starlette don't surface
+        # anywhere on their own — confirmed live, a real failed order left
+        # zero trace in the logs. Print explicitly so a failure is ever
+        # diagnosable instead of just a silent status flip to "failed".
+        print(f"generate_pack FAILED for order_id={order_id} billing_period={billing_period}")
+        print(traceback.format_exc())
         if not is_recurring_renewal:
             supabase.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
         raise
