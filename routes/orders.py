@@ -154,7 +154,7 @@ async def trigger_generation(order_id: str, background_tasks: BackgroundTasks):
     supabase = get_supabase_admin()
     order = (
         supabase.table("orders")
-        .select("id, status, stripe_payment_intent, stripe_subscription_id")
+        .select("id, status, paid_at")
         .eq("id", order_id)
         .maybe_single()
         .execute()
@@ -163,7 +163,12 @@ async def trigger_generation(order_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=404, detail="Order not found")
     if order.data["status"] not in ("pending", "failed"):
         raise HTTPException(status_code=400, detail=f"Order status is {order.data['status']}, cannot regenerate")
-    if not order.data["stripe_payment_intent"] and not order.data["stripe_subscription_id"]:
+    # paid_at is the unifying "this order is legitimately owed a pack" signal
+    # — set by the webhook on real Stripe payment, and set directly (with
+    # amount_paid=0) on the admin's own free orders. Checking the Stripe
+    # fields specifically (the old check) meant a failed free admin order
+    # could never be retried through this endpoint at all.
+    if not order.data["paid_at"]:
         raise HTTPException(status_code=402, detail="No confirmed payment on this order")
 
     supabase.table("orders").update({"status": "generating"}).eq("id", order_id).execute()
