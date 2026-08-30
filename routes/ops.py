@@ -1,12 +1,14 @@
 import uuid
 import os
+from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from services.supabase_service import get_supabase_admin
 from services import stripe_service
+from middleware.auth_guard import get_current_user_optional
 
 router = APIRouter()
 
@@ -31,7 +33,10 @@ class OpsOrderCreateRequest(BaseModel):
 
 
 @router.post("/create")
-async def create_ops_order(body: OpsOrderCreateRequest):
+async def create_ops_order(
+    body: OpsOrderCreateRequest,
+    current_user: dict | None = Depends(get_current_user_optional),
+):
     if not body.automations:
         raise HTTPException(status_code=400, detail="Select at least one automation")
     unknown = [a for a in body.automations if a not in VALID_AUTOMATIONS]
@@ -41,8 +46,12 @@ async def create_ops_order(body: OpsOrderCreateRequest):
     supabase = get_supabase_admin()
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
+    # Same rule as orders.py: is_admin comes only from the verified profiles
+    # row on the signed-in token, never a client-supplied flag.
+    is_admin_free = bool(current_user and current_user.get("is_admin"))
+
     referred_by_employee_id = None
-    if body.referral_code:
+    if body.referral_code and not is_admin_free:
         employee = (
             supabase.table("profiles")
             .select("id")
@@ -55,8 +64,9 @@ async def create_ops_order(body: OpsOrderCreateRequest):
             referred_by_employee_id = employee.data["id"]
 
     ops_order_id = str(uuid.uuid4())
-    supabase.table("ops_orders").insert({
+    ops_row = {
         "id": ops_order_id,
+        "user_id": current_user["user_id"] if current_user else None,
         "referred_by_employee_id": referred_by_employee_id,
         "email": body.email,
         "business_name": body.business_name,
@@ -67,7 +77,19 @@ async def create_ops_order(body: OpsOrderCreateRequest):
         "automations": body.automations,
         "notes": body.notes,
         "status": "pending",
-    }).execute()
+    }
+
+    if is_admin_free:
+        # No Stripe subscription at all for the admin's own free orders.
+        ops_row.update({
+            "status": "active",
+            "amount_paid": 0,
+            "paid_at": datetime.now(timezone.utc).isoformat(),
+        })
+        supabase.table("ops_orders").insert(ops_row).execute()
+        return {"ops_order_id": ops_order_id, "checkout_url": None, "free": True}
+
+    supabase.table("ops_orders").insert(ops_row).execute()
 
     session = stripe_service.create_ops_checkout_session(
         ops_order_id=ops_order_id,

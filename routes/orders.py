@@ -1,5 +1,6 @@
 import uuid
 import os
+from datetime import datetime, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
@@ -32,15 +33,24 @@ VALID_TIERS = ("starter", "growth", "agency", "agency_ongoing")
 
 
 @router.post("/create")
-async def create_order(body: OrderCreateRequest, current_user: dict | None = Depends(get_current_user_optional)):
+async def create_order(
+    body: OrderCreateRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict | None = Depends(get_current_user_optional),
+):
     if body.tier not in VALID_TIERS:
         raise HTTPException(status_code=400, detail=f"tier must be one of {', '.join(VALID_TIERS)}")
 
     supabase = get_supabase_admin()
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
+    # is_admin comes from the verified profiles row on the signed-in token
+    # (see auth_guard._verify) — never trust a client-supplied flag for this,
+    # since it decides whether the order is free.
+    is_admin_free = bool(current_user and current_user.get("is_admin"))
+
     referred_by_employee_id = None
-    if body.referral_code:
+    if body.referral_code and not is_admin_free:
         employee = (
             supabase.table("profiles")
             .select("id")
@@ -54,7 +64,7 @@ async def create_order(body: OrderCreateRequest, current_user: dict | None = Dep
         # An unrecognized code just means no attribution — never block checkout over it.
 
     order_id = str(uuid.uuid4())
-    supabase.table("orders").insert({
+    order_row = {
         "id": order_id,
         "user_id": current_user["user_id"] if current_user else None,
         "referred_by_employee_id": referred_by_employee_id,
@@ -70,7 +80,22 @@ async def create_order(body: OrderCreateRequest, current_user: dict | None = Dep
         "goals": body.goals,
         "tier": body.tier,
         "status": "pending",
-    }).execute()
+    }
+
+    if is_admin_free:
+        # No Stripe involved at all for the admin's own free orders — skips
+        # checkout entirely and goes straight to generation, same as a real
+        # webhook-confirmed payment would.
+        order_row.update({
+            "status": "generating",
+            "amount_paid": 0,
+            "paid_at": datetime.now(timezone.utc).isoformat(),
+        })
+        supabase.table("orders").insert(order_row).execute()
+        background_tasks.add_task(generate_pack, order_id)
+        return {"order_id": order_id, "checkout_url": None, "free": True}
+
+    supabase.table("orders").insert(order_row).execute()
 
     session = stripe_service.create_checkout_session(
         order_id=order_id,
