@@ -88,7 +88,23 @@ async def _generate_website(order: dict) -> str:
         temperature=0.7,
         max_tokens=3000,
     )
-    return response.choices[0].message.content.strip()
+    return _strip_markdown_fence(response.choices[0].message.content.strip())
+
+
+def _strip_markdown_fence(text: str) -> str:
+    """GPT-4o sometimes wraps the HTML in a ```html ... ``` code fence despite
+    being told to return only the document — this is a real, observed
+    behavior (confirmed via a live generation), not a hypothetical. Strip it
+    so the stored website_html is always valid standalone HTML, not text a
+    browser would render literally."""
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        first_newline = stripped.find("\n")
+        if first_newline != -1:
+            stripped = stripped[first_newline + 1:]
+        if stripped.endswith("```"):
+            stripped = stripped[:-3]
+    return stripped.strip()
 
 
 async def generate_pack(order_id: str, billing_period: int = 0) -> None:
