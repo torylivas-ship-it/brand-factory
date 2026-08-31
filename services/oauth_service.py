@@ -34,7 +34,12 @@ from services.supabase_service import get_supabase_admin
 # ── Platform configuration ──────────────────────────────────────────
 
 AUTH_URLS = {
-    "instagram": "https://api.instagram.com/oauth/authorize",
+    # www.instagram.com, NOT api.instagram.com — the old api.instagram.com
+    # authorize endpoint belonged to the Basic Display API, which Meta
+    # retired; confirmed live 2026-08-30 via a real user hitting it and
+    # getting "Invalid Request: Request parameters are invalid" from
+    # Instagram. Verified against Meta's current developer docs.
+    "instagram": "https://www.instagram.com/oauth/authorize",
     "tiktok": "https://www.tiktok.com/v2/auth/authorize",
     "google_business": "https://accounts.google.com/o/oauth2/v2/auth",
 }
@@ -52,7 +57,10 @@ REFRESH_URLS = {
 }
 
 DEFAULT_SCOPES = {
-    "instagram": "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement",
+    # instagram_basic/instagram_content_publish (and the Facebook-Login-only
+    # pages_* scopes) were deprecated by Meta on 2025-01-27 — these are the
+    # current names for the Instagram-Login flow this app actually uses.
+    "instagram": "instagram_business_basic,instagram_business_content_publish",
     "tiktok": "user.info.email,user.info.profile",
     "google_business": "https://www.googleapis.com/auth/business.manage",
 }
@@ -212,12 +220,14 @@ async def exchange_code_for_token(platform: str, code: str, user_id: str) -> dic
             user_id_ig = data.get("user_id")
             business_id = data.get("id") or data.get("business_id")
 
-            long_resp = await client.post(
-                "https://graph.instagram.com/ig-user-access-token",
+            # GET, not POST — and ig_exchange_token, not ig_exchange_code —
+            # per Meta's current docs for exchanging a short-lived token for
+            # a 60-day long-lived one. client_id isn't part of this call.
+            long_resp = await client.get(
+                "https://graph.instagram.com/access_token",
                 params={
-                    "grant_type": "ig_exchange_code",
+                    "grant_type": "ig_exchange_token",
                     "access_token": short_token,
-                    "client_id": config["client_id"],
                     "client_secret": config["client_secret"],
                 }
             )
@@ -361,13 +371,14 @@ async def refresh_token(platform: str, user_id: str, token_id: Optional[str] = N
     if platform == "instagram":
         current_access = _decrypt(current.get("access_token"))
         async with httpx.AsyncClient(timeout=30) as client:
+            # ig_refresh_token against /refresh_access_token, not
+            # ig_expired_token_refresh against /ig-user-access-token — the
+            # old endpoint/grant_type belonged to the deprecated flow.
             resp = await client.get(
-                "https://graph.instagram.com/ig-user-access-token",
+                "https://graph.instagram.com/refresh_access_token",
                 params={
-                    "grant_type": "ig_expired_token_refresh",
+                    "grant_type": "ig_refresh_token",
                     "access_token": current_access,
-                    "client_id": config["client_id"],
-                    "client_secret": config["client_secret"],
                 }
             )
         if resp.status_code != 200:
