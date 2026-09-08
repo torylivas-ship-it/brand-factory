@@ -111,7 +111,11 @@ create policy "Admins only can access app_config"
 --    'instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement'),
 --   ('tiktok', 'YOUR_TIKTOK_CLIENT_KEY', 'YOUR_TIKTOK_CLIENT_SECRET',
 --    'https://brand-factory-production-b27f.up.railway.app/auth/tiktok/callback',
---    'user.info.email,user.info.profile'),
+--    -- video.publish requested here so the consent screen asks for posting
+--    -- rights, but TikTok won't actually grant it until the app has passed
+--    -- audit for the Content Posting API product (see
+--    -- ~/.hermes/skills/social-media/tiktok-content-post/SKILL.md).
+--    'user.info.email,user.info.profile,video.publish'),
 --   ('google_business', 'YOUR_GOOGLE_CLIENT_ID', 'YOUR_GOOGLE_CLIENT_SECRET',
 --    'https://brand-factory-production-b27f.up.railway.app/auth/google_business/callback',
 --    'https://www.googleapis.com/auth/business.manage');
