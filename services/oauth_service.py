@@ -46,13 +46,19 @@ AUTH_URLS = {
 
 TOKEN_URLS = {
     "instagram": "https://api.instagram.com/oauth/access_token",
-    "tiktok": "https://open.tiktokapis.com/v2/auth/oauth/token/",
+    # Corrected 2026-09-08: TikTok's real v2 token endpoint is
+    # open.tiktokapis.com/v2/oauth/token/ — there is no "/auth/" segment.
+    # The old value here (.../v2/auth/oauth/token/) 404s against TikTok's
+    # current API; confirmed against TikTok's own OAuth docs. This endpoint
+    # is also used for token refresh (same URL, grant_type=refresh_token),
+    # so REFRESH_URLS["tiktok"] below now points at the same place.
+    "tiktok": "https://open.tiktokapis.com/v2/oauth/token/",
     "google_business": "https://oauth2.googleapis.com/token",
 }
 
 REFRESH_URLS = {
     "instagram": "https://graph.instagram.com/ig-user-access-token",
-    "tiktok": "https://open.tiktokapis.com/v2/auth/oauth/refresh_token/",
+    "tiktok": "https://open.tiktokapis.com/v2/oauth/token/",
     "google_business": "https://oauth2.googleapis.com/token",
 }
 
@@ -61,7 +67,14 @@ DEFAULT_SCOPES = {
     # pages_* scopes) were deprecated by Meta on 2025-01-27 — these are the
     # current names for the Instagram-Login flow this app actually uses.
     "instagram": "instagram_business_basic,instagram_business_content_publish",
-    "tiktok": "user.info.email,user.info.profile",
+    # video.publish added 2026-09-08 so the OAuth consent screen actually
+    # requests Content Posting API permission, not just login/profile read.
+    # TikTok will silently drop this scope from the granted token until the
+    # app has passed audit for it (unaudited apps get everything else but
+    # publish rights) — see tiktok-content-post skill SKILL.md for the real
+    # prerequisite chain (app creation, Content Posting API product, audit
+    # + demo video) before this scope actually grants anything.
+    "tiktok": "user.info.email,user.info.profile,video.publish",
     "google_business": "https://www.googleapis.com/auth/business.manage",
 }
 
