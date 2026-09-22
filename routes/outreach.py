@@ -8,6 +8,7 @@ from typing import Optional
 from middleware.auth_guard import get_current_user
 from services.supabase_service import get_supabase_admin
 from services.sms_service import send_sms, SmsNotConfigured
+from services.places_service import discover_candidates, PlacesNotConfigured
 
 router = APIRouter()
 
@@ -81,6 +82,63 @@ async def create_lead(body: CreateLeadRequest, admin: dict = Depends(require_adm
     supabase = get_supabase_admin()
     row = supabase.table("outreach_leads").insert(body.model_dump(exclude_none=True)).execute()
     return row.data[0] if row.data else {}
+
+
+class DiscoverLeadsRequest(BaseModel):
+    query: str  # e.g. "barbershop"
+    location: str = "New Orleans, LA"
+    cohort: str = "appointment"
+    max_results: int = 20
+
+
+@router.post("/discover")
+async def discover_leads(body: DiscoverLeadsRequest, admin: dict = Depends(require_admin)):
+    """Finds real local-business candidates via Google Places (name, real
+    Google-verified phone, address, rating) and inserts them as 'new' leads
+    — never drafts a Hook message and never sends anything. A human still
+    has to write the actual Hook text per candidate before send-hook will
+    allow a send (that endpoint requires hook_message to be set), same as
+    every other lead in this table — discovery only replaces the slow,
+    error-prone manual search step, not the judgment calls after it."""
+    supabase = get_supabase_admin()
+
+    try:
+        candidates = await discover_candidates(body.query, body.location, body.max_results)
+    except PlacesNotConfigured as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
+    existing = supabase.table("outreach_leads").select("business_name").execute()
+    existing_names = {row["business_name"].strip().lower() for row in (existing.data or [])}
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    new_rows = []
+    skipped = []
+    for c in candidates:
+        if not c["business_name"] or c["business_name"].strip().lower() in existing_names:
+            skipped.append(c["business_name"])
+            continue
+        new_rows.append({
+            "business_name": c["business_name"],
+            "instagram_handle": c["instagram_handle"],
+            "phone": c["phone"],
+            "cohort": body.cohort,
+            "source": f"google_places_{body.query}_{today}",
+            "status": "new",
+            "notes": (
+                f"Discovered via Google Places: {c.get('address') or 'no address'} — "
+                f"rating {c.get('rating', 'n/a')} ({c.get('review_count', 0)} reviews)"
+                + (f" — website: {c['website']}" if c.get("website") and not c["instagram_handle"] else "")
+                + ("" if c["phone"] else " — NO PHONE returned by Places, needs manual lookup")
+            ),
+        })
+
+    inserted = supabase.table("outreach_leads").insert(new_rows).execute() if new_rows else None
+    return {
+        "found": len(candidates),
+        "inserted": len(inserted.data) if inserted else 0,
+        "skipped_duplicates": skipped,
+        "leads": inserted.data if inserted else [],
+    }
 
 
 class UpdateLeadStatusRequest(BaseModel):
