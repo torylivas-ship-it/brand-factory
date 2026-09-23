@@ -57,3 +57,30 @@ async def send_pack_ready_email(order: dict, is_renewal: bool = False) -> None:
             )
     except Exception:
         pass
+
+
+class EmailNotConfigured(Exception):
+    """SENDGRID_API_KEY isn't set — distinct from a real send failure."""
+
+
+async def send_email(to: str, subject: str, text: str, from_name: str = "The Brand Factory NOLA") -> None:
+    """Plain-text transactional send for Workframe jobs (reminders, review
+    requests). Unlike send_pack_ready_email this DOES raise, so the scheduler
+    can record a real failure on the job instead of marking it sent."""
+    api_key = os.getenv("SENDGRID_API_KEY")
+    if not api_key:
+        raise EmailNotConfigured("SENDGRID_API_KEY is not set.")
+
+    from_email = os.getenv("EMAIL_FROM", "thebrandfactorynola@gmail.com")
+    payload = {
+        "personalizations": [{"to": [{"email": to}], "subject": subject}],
+        "from": {"email": from_email, "name": from_name},
+        "content": [{"type": "text/plain", "value": text}],
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.post(
+            SENDGRID_API_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    response.raise_for_status()

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 
 from services.supabase_service import get_supabase_admin
 from services.pack_service import generate_pack
+from services.workframe_brains import create_brain_from_ops_order, send_setup_email
 
 router = APIRouter()
 
@@ -52,12 +53,22 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
                 ops_order_id = ops_result.data["id"]
                 paid_at = datetime.now(timezone.utc).isoformat()
 
-                supabase.table("ops_orders").update({
+                ops_row = supabase.table("ops_orders").update({
                     "status": "active",
                     "stripe_subscription_id": subscription_id,
                     "amount_paid": amount_total,
                     "paid_at": paid_at,
                 }).eq("id", ops_order_id).execute()
+
+                # Provision the client's Workframe (Business Brain) right away
+                # so onboarding can start from the success page. Never let a
+                # provisioning hiccup fail the webhook — the payment is already
+                # recorded, and an admin can provision from /wf/brains later.
+                try:
+                    brain = create_brain_from_ops_order(supabase, ops_row.data[0])
+                    background_tasks.add_task(send_setup_email, brain)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[billing] Workframe provisioning failed for ops order {ops_order_id}: {exc!r}")
         else:
             order_result = supabase.table("orders").select("id, status").eq("stripe_session_id", session_id).maybe_single().execute()
 
@@ -78,7 +89,11 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
     elif event["type"] == "customer.subscription.deleted":
         subscription = event["data"]["object"]
         subscription_id = subscription["id"]
-        supabase.table("ops_orders").update({"status": "canceled"}).eq("stripe_subscription_id", subscription_id).execute()
+        canceled = supabase.table("ops_orders").update({"status": "canceled"}).eq("stripe_subscription_id", subscription_id).execute()
+        # A canceled subscription stops the client's Workframe too — the
+        # engine never sends for a brain that isn't 'live'.
+        for ops_order in (canceled.data or []):
+            supabase.table("wf_brains").update({"status": "canceled"}).eq("ops_order_id", ops_order["id"]).execute()
 
     elif event["type"] == "invoice.paid":
         invoice = event["data"]["object"]

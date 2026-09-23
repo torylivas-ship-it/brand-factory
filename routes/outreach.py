@@ -7,10 +7,21 @@ from typing import Optional
 
 from middleware.auth_guard import get_current_user
 from services.supabase_service import get_supabase_admin
-from services.sms_service import send_sms, SmsNotConfigured
+from services.sms_service import send_sms, SmsNotConfigured, twilio_signature_valid
 from services.places_service import discover_candidates, PlacesNotConfigured
+from services.workframe_engine import handle_inbound_sms
 
 router = APIRouter()
+
+
+def _public_url(request: Request) -> str:
+    """The URL Twilio actually posted to. Railway terminates TLS at its proxy,
+    so request.url says http:// — rebuild it from the forwarded headers.
+    Set TWILIO_WEBHOOK_URL to skip the guesswork entirely."""
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    query = f"?{request.url.query}" if request.url.query else ""
+    return f"{proto}://{host}{request.url.path}{query}"
 
 # How many outbound sends (hook + pitch + follow-up, combined) are allowed
 # per calendar day across ALL leads. Deliberately conservative default —
@@ -226,13 +237,23 @@ async def inbound_sms_webhook(request: Request):
     """Twilio calls this on every inbound reply (configure the number's
     'A message comes in' webhook to POST here once a real number exists).
     No admin auth — this is a public webhook Twilio itself calls, same
-    pattern as /billing/webhook for Stripe. Twilio request-signature
-    validation is NOT implemented yet — add it (via the `twilio` package's
-    RequestValidator) before this handles anything beyond opt-outs, so a
-    forged POST can't fake a reply."""
+    pattern as /billing/webhook for Stripe — so every request must carry a
+    valid X-Twilio-Signature, or a forged POST could opt people out or fake
+    replies.
+
+    One Twilio number serves both BFN's own cold outreach and every client
+    Workframe, so a reply is routed to whichever (or both) knows the number."""
     form = await request.form()
+    params = {k: v for k, v in form.items()}
+    url = os.getenv("TWILIO_WEBHOOK_URL") or _public_url(request)
+    if not twilio_signature_valid(url, params, request.headers.get("x-twilio-signature")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid Twilio signature")
+
     from_number = form.get("From", "")
-    inbound_body = (form.get("Body") or "").strip().lower()
+    raw_body = (form.get("Body") or "").strip()
+    inbound_body = raw_body.lower()
+
+    workframe_result = await handle_inbound_sms(from_number, raw_body)
 
     supabase = get_supabase_admin()
     lead_result = (
@@ -244,7 +265,7 @@ async def inbound_sms_webhook(request: Request):
     )
     lead = lead_result.data if lead_result else None
     if not lead:
-        return {"matched": False}
+        return {"matched": False, "workframe": workframe_result}
 
     if any(phrase in inbound_body for phrase in OPT_OUT_PHRASES):
         supabase.table("outreach_leads").update({"status": "do_not_contact"}).eq("id", lead["id"]).execute()
