@@ -276,7 +276,17 @@ async def create_brain_route(body: CreateBrainRequest, current_user: dict | None
 @router.get("/brains/{brain_id}")
 async def get_brain(access: tuple = Depends(brain_access)):
     brain, role = access
-    return {"brain": _public_brain(brain, role), "role": role, "verticals": {k: v["label"] for k, v in VERTICALS.items()}}
+    # Lets the dashboard be honest about what can actually go out right now
+    # (e.g. "texts start once your text line is active") instead of implying
+    # reminders are running when Twilio isn't configured yet.
+    channels = {
+        "sms": all(os.getenv(k) for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")),
+        "email": bool(os.getenv("SENDGRID_API_KEY")),
+    }
+    return {
+        "brain": _public_brain(brain, role), "role": role, "channels": channels,
+        "verticals": {k: v["label"] for k, v in VERTICALS.items()},
+    }
 
 
 class ServiceItem(BaseModel):
@@ -292,9 +302,9 @@ class FaqItem(BaseModel):
 
 
 class UpdateBrainRequest(BaseModel):
-    business_name: Optional[str] = Field(default=None, max_length=120)
-    business_type: Optional[str] = Field(default=None, max_length=80)
-    city: Optional[str] = Field(default=None, max_length=80)
+    business_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    business_type: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    city: Optional[str] = Field(default=None, min_length=1, max_length=80)
     owner_name: Optional[str] = Field(default=None, max_length=80)
     owner_email: Optional[str] = Field(default=None, max_length=200)
     owner_phone: Optional[str] = Field(default=None, max_length=30)

@@ -248,17 +248,25 @@ def no_website_report(url: str) -> tuple[int, dict, list[dict]]:
 async def _narrate(business: dict, signals: dict, score: int, findings: list[dict]) -> dict | None:
     """Rewrites the rule-based findings into a specific, plain-English report.
     Returns None on any failure (caller uses the rule-based version)."""
+    text_sample = signals.get("text_sample", "")[:1500]
+    strengths_rule = (
+        "In the summary, name one specific thing they do well ONLY if it is directly visible in the page text below."
+        if text_sample else
+        "We did not read any page content — do NOT compliment or describe their business, content, or presence at all."
+    )
     prompt = (
         "You write short, specific website audits for small local business owners. Plain language, no jargon, "
         "no hype, and never use the words 'AI' or 'artificial intelligence'. Never invent statistics, "
-        "percentages, or dollar amounts. Only use the findings given.\n\n"
+        "percentages, dollar amounts, or facts about the business. Only use the findings given. "
+        f"{strengths_rule}\n\n"
         f"Business: {business.get('business_name') or 'unknown'} — {business.get('business_type') or 'local business'} "
         f"in {business.get('city') or 'New Orleans'}\n"
         f"Score: {score}/100\n"
         f"Findings (already ranked by impact): {json.dumps(findings)}\n"
-        f"Page text sample: {signals.get('text_sample', '')[:1500]}\n\n"
-        "Return JSON: {\"headline\": string (<=12 words), \"summary\": string (2 sentences, name one thing they "
-        "do well if the page text shows it), \"opportunities\": [{\"title\": string (<=8 words), \"why\": string "
+        f"Page text sample: {text_sample or '(none)'}\n\n"
+        "Return JSON: {\"headline\": string (<=10 words — a plain-spoken verdict to the owner, like "
+        "'You're leaving bookings on the table', never a title like 'Website Audit for X'), "
+        "\"summary\": string (2 sentences), \"opportunities\": [{\"title\": string (<=8 words), \"why\": string "
         "(1 sentence, specific to this business), \"fix\": string (1 sentence)}] — one per finding, same order, max 6}"
     )
     try:
