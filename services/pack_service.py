@@ -11,9 +11,35 @@ _client: AsyncOpenAI | None = None
 
 SYSTEM = (
     "You are a social media strategist specializing in helping small local businesses "
-    "in New Orleans and the Gulf Coast region build their online presence. "
-    "Your content is authentic, culturally aware, locally specific, and results-driven."
+    "and independent professionals in New Orleans and the Gulf Coast region build their "
+    "online presence. Your content is authentic, culturally aware, locally specific, and results-driven. "
+    "Never refer to the client or owner with gendered pronouns (he/she/his/her) — you don't know their "
+    "gender. Use their name, the brand name, or they/their."
 )
+
+# Content Packs are also the product for people who don't own a shop — chair/
+# booth renters, independent barbers and stylists, freelancers, creators —
+# whose "brand" is themselves. Detected from the free-text "What you do" field.
+PERSONAL_BRAND_MARKERS = (
+    "independent", "booth", "chair", "renter", "rent a", "freelance", "self-employed",
+    "personal brand", "creator", "influencer", "solo", "mobile ", "artist", "my own",
+)
+
+PERSONAL_BRAND_GUIDANCE = (
+    "\nThis is an INDEPENDENT PROFESSIONAL building a personal brand, not a business with its own "
+    "storefront. Write captions in their own first-person voice (\"I\", \"my chair\", \"book with me\"), "
+    "never \"our shop\" or \"our team\". Don't assume they own or control the location they work from. "
+    "Content pillars should center on their craft, their portfolio (before/after, transformations), their "
+    "personality and story, and client trust. Calls to action send people to book with them directly "
+    "(their booking link or DMs), and the strategy should build a following that stays with them "
+    "wherever they work. In the strategy, refer to them by name — never guess their gender or use "
+    "he/she/his/her for them.\n"
+)
+
+
+def is_personal_brand(order: dict) -> bool:
+    text = f"{order.get('business_type', '')} {order.get('goals', '')}".lower()
+    return any(marker in text for marker in PERSONAL_BRAND_MARKERS)
 
 TIER_CONFIG = {
     "starter": {"calendar_days": 14, "caption_count": 14, "hashtag_groups": 3},
@@ -34,9 +60,11 @@ async def _generate_main(order: dict, cfg: dict) -> dict:
     platforms = ", ".join(order.get("platforms") or ["Instagram", "Facebook"])
     neighborhood = f", {order['neighborhood']}" if order.get("neighborhood") else ""
 
-    prompt = f"""Generate a complete social media content pack for this local business:
-
-Business: {order['business_name']} ({order['business_type']})
+    personal = is_personal_brand(order)
+    subject = "independent professional's personal brand" if personal else "local business"
+    prompt = f"""Generate a complete social media content pack for this {subject}:
+{PERSONAL_BRAND_GUIDANCE if personal else ""}
+{"Name / brand" if personal else "Business"}: {order['business_name']} ({order['business_type']})
 Location: {order['city']}{neighborhood}
 Target Audience: {order['target_audience']}
 Platforms: {platforms}
@@ -85,6 +113,11 @@ async def _generate_website(order: dict) -> str:
                     f"Create a complete single-page HTML website for {order['business_name']}, "
                     f"a {order['business_type']} in {order['city']}{neighborhood}. "
                     f"Target audience: {order['target_audience']}. "
+                    + (
+                        "This is a personal brand for an independent professional: write in first person, "
+                        "use a portfolio section instead of 'our team', and make the CTA 'Book with me'. "
+                        if is_personal_brand(order) else ""
+                    ) +
                     "Use embedded CSS with a dark gold theme (background #0d0d0d, accent #c9a84c). "
                     "Sections: header/nav, hero with CTA, about, services (3 cards), contact form, footer. "
                     "Make it mobile-responsive and locally authentic. "
