@@ -423,6 +423,21 @@ def test_audit_blocks_private_addresses_and_handles_social_only(app_client):
     assert stored["score"] == 20
 
 
+def test_outreach_lead_audit_attaches_report(app_client, env):
+    lead = env.table("outreach_leads").insert({
+        "business_name": "Prospect Cuts", "instagram_handle": "@prospectcuts", "cohort": "appointment",
+    }).execute().data[0]
+    app_client.fakes.llm_queue = [RuntimeError("rule-based path")]
+    r = app_client.post(f"/outreach/leads/{lead['id']}/audit", headers=ADMIN)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["report_url"].endswith(f"/audit?id={body['audit_id']}")
+    assert body["top_finding"] and body["score"] == 20
+    stored = env.table("outreach_leads").select("audit_id, status").eq("id", lead["id"]).execute().data[0]
+    assert stored["audit_id"] == body["audit_id"] and stored["status"] == "new"  # nothing sent/drafted
+    assert app_client.post(f"/outreach/leads/{lead['id']}/audit", headers={"Authorization": "Bearer stranger-token"}).status_code == 403
+
+
 def test_audit_rate_limit(app_client):
     ip = {"X-Forwarded-For": "10.9.9.9"}
     codes = [app_client.post("/wf/public/audit", json={"website_url": "instagram.com/a"}, headers=ip).status_code for _ in range(6)]

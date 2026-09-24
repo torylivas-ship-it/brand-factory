@@ -150,3 +150,8 @@ create policy "service role full access wf_jobs"     on public.wf_jobs     for a
 create policy "service role full access wf_audits"   on public.wf_audits   for all using (auth.role() = 'service_role');
 
 revoke all on public.wf_brains, public.wf_contacts, public.wf_messages, public.wf_jobs, public.wf_audits from anon, authenticated;
+
+-- Audit-led outreach: prospects in outreach_leads get a website + their free
+-- audit attached, so the first message can cite a real, specific finding.
+alter table public.outreach_leads add column if not exists website_url text;
+alter table public.outreach_leads add column if not exists audit_id uuid references public.wf_audits(id) on delete set null;

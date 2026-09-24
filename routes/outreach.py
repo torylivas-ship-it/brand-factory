@@ -10,6 +10,7 @@ from services.supabase_service import get_supabase_admin
 from services.sms_service import send_sms, SmsNotConfigured, twilio_signature_valid
 from services.places_service import discover_candidates, PlacesNotConfigured
 from services.workframe_engine import handle_inbound_sms
+from services.audit_service import run_audit, AuditError
 
 router = APIRouter()
 
@@ -72,6 +73,7 @@ def _enforce_daily_cap(supabase) -> None:
 class CreateLeadRequest(BaseModel):
     business_name: str
     instagram_handle: Optional[str] = None
+    website_url: Optional[str] = None
     phone: Optional[str] = None  # E.164, e.g. +15045551234
     cohort: str = "appointment"  # 'appointment' or 'retail'
     source: Optional[str] = None
@@ -133,6 +135,7 @@ async def discover_leads(body: DiscoverLeadsRequest, admin: dict = Depends(requi
             "instagram_handle": c["instagram_handle"],
             "phone": c["phone"],
             "cohort": body.cohort,
+            "website_url": c.get("website") if c.get("website") and not c["instagram_handle"] else None,
             "source": f"google_places_{body.query}_{today}",
             "status": "new",
             "notes": (
@@ -215,6 +218,49 @@ async def _send_stage(lead_id: str, stage: str, message_field: str, next_status:
         .execute()
     )
     return updated.data[0] if updated.data else {}
+
+
+@router.post("/leads/{lead_id}/audit")
+async def audit_lead(lead_id: str, admin: dict = Depends(require_admin)):
+    """Runs the free website check on a prospect (their website, or their
+    Instagram if that's all they have) and attaches it to the lead. Gives the
+    human writing the Hook a real, specific finding plus a report link to
+    share — it does NOT draft or send anything itself."""
+    supabase = get_supabase_admin()
+    lead_result = supabase.table("outreach_leads").select("*").eq("id", lead_id).maybe_single().execute()
+    lead = lead_result.data if lead_result else None
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    target = lead.get("website_url")
+    if not target and lead.get("instagram_handle"):
+        target = f"instagram.com/{lead['instagram_handle'].lstrip('@')}"
+    if not target:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lead has no website_url or instagram_handle to check.")
+
+    try:
+        result = await run_audit(target, {"business_name": lead["business_name"], "city": "New Orleans"})
+    except AuditError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    row = supabase.table("wf_audits").insert({
+        "website_url": result["signals"].get("final_url") or target,
+        "business_name": lead["business_name"],
+        "score": result["score"],
+        "signals": result["signals"],
+        "report": result["report"],
+    }).execute().data[0]
+    supabase.table("outreach_leads").update({"audit_id": row["id"]}).eq("id", lead_id).execute()
+
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    opportunities = result["report"].get("opportunities", [])
+    return {
+        "audit_id": row["id"],
+        "report_url": f"{frontend_url}/audit?id={row['id']}",
+        "score": result["score"],
+        "top_finding": opportunities[0]["why"] if opportunities else None,
+        "report": result["report"],
+    }
 
 
 @router.post("/leads/{lead_id}/send-hook")
