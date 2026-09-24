@@ -438,6 +438,101 @@ def test_outreach_lead_audit_attaches_report(app_client, env):
     assert app_client.post(f"/outreach/leads/{lead['id']}/audit", headers={"Authorization": "Bearer stranger-token"}).status_code == 403
 
 
+def _ops_row(**over):
+    row = {"id": str(uuid.uuid4()), "email": "o@x.test", "business_name": "Shop", "business_type": "barbershop",
+           "city": "New Orleans", "automations": ["review_requests"], "status": "active", "plan": "founding",
+           "amount_paid": 4900}
+    row.update(over)
+    return row
+
+
+def test_plans_endpoint_and_founding_sellout(app_client, env, monkeypatch):
+    from services import stripe_service
+    captured = {}
+
+    def fake_checkout(**kw):
+        captured.update(kw)
+        return SimpleNamespace(id="cs_test_" + uuid.uuid4().hex[:8], url="https://checkout.test/x")
+    monkeypatch.setattr(stripe_service, "create_ops_checkout_session", fake_checkout)
+
+    plans = {p["key"]: p for p in app_client.get("/ops/plans").json()["plans"]}
+    assert (plans["founding"]["monthly_usd"], plans["standard"]["monthly_usd"], plans["pro"]["monthly_usd"]) == (29, 89, 149)
+    assert (plans["founding"]["text_cap"], plans["standard"]["text_cap"], plans["pro"]["text_cap"]) == (500, 1000, 2500)
+    left = plans["founding"]["spots_left"]
+
+    # Comp (amount 0), canceled, and non-founding orders never consume a spot.
+    env.table("ops_orders").insert([_ops_row(amount_paid=0), _ops_row(status="canceled"), _ops_row(plan="pro")]).execute()
+    assert {p["key"]: p for p in app_client.get("/ops/plans").json()["plans"]}["founding"]["spots_left"] == left
+
+    fillers = [_ops_row() for _ in range(left)]
+    env.table("ops_orders").insert(fillers).execute()
+    try:
+        plans = {p["key"]: p for p in app_client.get("/ops/plans").json()["plans"]}
+        assert plans["founding"]["spots_left"] == 0 and plans["founding"]["available"] is False
+        body = {"email": "new@shop.test", "business_name": "Late Shop", "business_type": "barbershop",
+                "city": "New Orleans", "automations": ["review_requests"]}
+        r = app_client.post("/ops/create", json={**body, "plan": "founding"})
+        assert r.status_code == 409 and "Founding" in r.json()["detail"]
+        r = app_client.post("/ops/create", json={**body, "plan": "standard"})
+        assert r.status_code == 200, r.text
+        assert captured["plan"] == "standard"
+        stored = env.table("ops_orders").select("plan").eq("id", r.json()["ops_order_id"]).execute().data[0]
+        assert stored["plan"] == "standard"
+        assert app_client.post("/ops/create", json={**body, "plan": "platinum"}).status_code == 400
+    finally:
+        env.table("ops_orders").delete().in_("id", [f["id"] for f in fillers]).execute()
+
+
+def test_checkout_uses_each_plans_stripe_prices(env, monkeypatch):
+    import stripe
+    from services import stripe_service
+    for k, v in {"STRIPE_PRICE_OPS_SETUP": "p_f_setup", "STRIPE_PRICE_OPS_MONTHLY": "p_f_mo",
+                 "STRIPE_PRICE_OPS_PRO_SETUP": "p_pro_setup", "STRIPE_PRICE_OPS_PRO_MONTHLY": "p_pro_mo"}.items():
+        monkeypatch.setenv(k, v)
+    calls = []
+    monkeypatch.setattr(stripe.checkout.Session, "create", lambda **kw: calls.append(kw) or SimpleNamespace(id="cs", url="u"))
+    stripe_service.create_ops_checkout_session("oid", "e@x.test", "s", "c", plan="pro")
+    stripe_service.create_ops_checkout_session("oid", "e@x.test", "s", "c")
+    assert [li["price"] for li in calls[0]["line_items"]] == ["p_pro_setup", "p_pro_mo"]
+    assert calls[0]["metadata"]["plan"] == "pro"
+    assert [li["price"] for li in calls[1]["line_items"]] == ["p_f_setup", "p_f_mo"]
+    monkeypatch.delenv("STRIPE_PRICE_OPS_STANDARD_SETUP", raising=False)
+    with pytest.raises(RuntimeError):
+        stripe_service.create_ops_checkout_session("oid", "e@x.test", "s", "c", plan="standard")
+
+
+def test_pro_order_brain_gets_pro_text_cap(env):
+    from services.workframe_brains import create_brain_from_ops_order
+    row = _ops_row(plan="pro")
+    env.table("ops_orders").insert(row).execute()
+    brain = create_brain_from_ops_order(env, env.table("ops_orders").select("*").eq("id", row["id"]).execute().data[0])
+    assert brain["plan"] == "pro" and brain["monthly_text_cap"] == 2500
+
+
+def test_text_cap_enforced_with_visible_reason(app_client, env):
+    import asyncio
+    from services import workframe_engine as engine
+    brain = _make_brain(app_client)
+    owner = _owner(brain)
+    app_client.patch(f"/wf/brains/{brain['id']}", headers=owner, json={"status": "live"})
+    env.table("wf_brains").update({"monthly_text_cap": 1}).eq("id", brain["id"]).execute()
+
+    jobs = []
+    for i, phone in enumerate(("5045550301", "5045550302")):
+        c = app_client.post(f"/wf/brains/{brain['id']}/contacts", headers=owner, json={"name": f"C{i}", "phone": phone}).json()["contact"]
+        jobs.append(app_client.post(f"/wf/brains/{brain['id']}/contacts/{c['id']}/visit", headers=owner).json()["scheduled"][0])
+    due = max(datetime.fromisoformat(j["send_at"]) for j in jobs) + timedelta(minutes=1)
+    counts = asyncio.run(engine.run_due_jobs(now=due))
+    assert counts["sent"] == 1 and counts["over_cap"] == 1
+
+    statuses = {j["id"]: env.table("wf_jobs").select("status, last_error").eq("id", j["id"]).execute().data[0] for j in jobs}
+    capped = [s for s in statuses.values() if s["status"] == "canceled"]
+    assert len(capped) == 1 and "monthly text limit reached (1" in capped[0]["last_error"]
+
+    s = app_client.get(f"/wf/brains/{brain['id']}/summary", headers=owner).json()
+    assert s["texts_used_this_month"] == 1 and s["text_cap"] == 1 and s["plan"] == "founding"
+
+
 def test_audit_rate_limit(app_client):
     ip = {"X-Forwarded-For": "10.9.9.9"}
     codes = [app_client.post("/wf/public/audit", json={"website_url": "instagram.com/a"}, headers=ip).status_code for _ in range(6)]

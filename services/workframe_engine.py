@@ -166,6 +166,24 @@ def schedule_appointment(sb, brain: dict, contact: dict, appointment_at: datetim
     return jobs
 
 
+def month_start_utc(now: datetime) -> datetime:
+    """Start of the current calendar month in local (Central) time — text
+    caps reset on the 1st the way an owner would expect."""
+    local = now.astimezone(LOCAL_TZ)
+    return local.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+
+def texts_sent_this_month(sb, brain_id: str, now: datetime | None = None) -> int:
+    now = now or utcnow()
+    result = (
+        sb.table("wf_jobs").select("id", count="exact")
+        .eq("brain_id", brain_id).eq("channel", "sms").eq("status", "sent")
+        .gte("sent_at", month_start_utc(now).isoformat())
+        .execute()
+    )
+    return result.count or 0
+
+
 def _skip_reason(job: dict, contact: dict | None, brain: dict | None, now: datetime) -> str | None:
     if not brain or not contact:
         return "brain or contact no longer exists"
@@ -211,8 +229,9 @@ async def run_due_jobs(now: datetime | None = None) -> dict:
         .execute()
     ).data or []
 
-    counts = {"due": len(due), "sent": 0, "canceled": 0, "retrying": 0, "failed": 0, "waiting_config": 0}
+    counts = {"due": len(due), "sent": 0, "canceled": 0, "retrying": 0, "failed": 0, "waiting_config": 0, "over_cap": 0}
     brains: dict[str, dict | None] = {}
+    texts_used: dict[str, int] = {}
 
     for job in due:
         if job["brain_id"] not in brains:
@@ -233,6 +252,21 @@ async def run_due_jobs(now: datetime | None = None) -> dict:
         if job["channel"] == "sms" and next_in_window(now) != now:
             sb.table("wf_jobs").update({"send_at": next_in_window(now).isoformat()}).eq("id", job["id"]).execute()
             continue
+
+        # Plan text cap: no client can cost more in SMS fees than they pay.
+        # Over-cap texts are canceled with a visible reason (the dashboard
+        # shows usage), not silently dropped.
+        if job["channel"] == "sms":
+            if brain["id"] not in texts_used:
+                texts_used[brain["id"]] = texts_sent_this_month(sb, brain["id"], now)
+            cap = brain.get("monthly_text_cap") or 500
+            if texts_used[brain["id"]] >= cap:
+                sb.table("wf_jobs").update({
+                    "status": "canceled",
+                    "last_error": f"monthly text limit reached ({cap} on the {brain.get('plan', 'founding')} plan)",
+                }).eq("id", job["id"]).execute()
+                counts["over_cap"] += 1
+                continue
 
         try:
             await _deliver(job, contact, brain)
@@ -266,6 +300,8 @@ async def run_due_jobs(now: datetime | None = None) -> dict:
             contact_update["followup_step"] = (contact.get("followup_step") or 0) + 1
         sb.table("wf_contacts").update(contact_update).eq("id", contact["id"]).execute()
         counts["sent"] += 1
+        if job["channel"] == "sms":
+            texts_used[brain["id"]] = texts_used.get(brain["id"], 0) + 1
 
     return counts
 

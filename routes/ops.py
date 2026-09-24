@@ -10,6 +10,7 @@ from services.supabase_service import get_supabase_admin
 from services import stripe_service
 from middleware.auth_guard import get_current_user_optional
 from services.workframe_brains import create_brain_from_ops_order
+from services.ops_plans import PLANS, FOUNDING_SPOTS, founding_spots_taken, public_plans
 
 router = APIRouter()
 
@@ -33,6 +34,13 @@ class OpsOrderCreateRequest(BaseModel):
     automations: List[str]
     notes: Optional[str] = None
     referral_code: Optional[str] = None
+    plan: str = "founding"
+
+
+@router.get("/plans")
+async def list_plans():
+    """Public: plan prices + live Founding spots left, for the /ops page."""
+    return {"plans": public_plans(get_supabase_admin())}
 
 
 @router.post("/create")
@@ -45,9 +53,21 @@ async def create_ops_order(
     unknown = [a for a in body.automations if a not in VALID_AUTOMATIONS]
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown automation(s): {', '.join(unknown)}")
+    if body.plan not in PLANS:
+        raise HTTPException(status_code=400, detail=f"plan must be one of {sorted(PLANS)}")
 
     supabase = get_supabase_admin()
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+    # Founding closes for good once 10 real clients have paid for it. (Two
+    # people checking out at the exact same moment for the last spot could
+    # both get in — acceptable; honoring an 11th founding price is cheap.)
+    if body.plan == "founding" and not (current_user and current_user.get("is_admin")):
+        if founding_spots_taken(supabase) >= FOUNDING_SPOTS:
+            raise HTTPException(
+                status_code=409,
+                detail="All 10 Founding spots are taken — Standard and Pro are still open.",
+            )
 
     # Same rule as orders.py: is_admin comes only from the verified profiles
     # row on the signed-in token, never a client-supplied flag.
@@ -79,6 +99,7 @@ async def create_ops_order(
         "booking_system": body.booking_system,
         "automations": body.automations,
         "notes": body.notes,
+        "plan": body.plan,
         "status": "pending",
     }
 
@@ -100,6 +121,7 @@ async def create_ops_order(
         email=body.email,
         success_url=f"{frontend_url}/ops-success?ops_order_id={ops_order_id}",
         cancel_url=f"{frontend_url}/ops?canceled=1",
+        plan=body.plan,
     )
 
     supabase.table("ops_orders").update({"stripe_session_id": session.id}).eq("id", ops_order_id).execute()
