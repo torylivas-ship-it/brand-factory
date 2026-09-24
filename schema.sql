@@ -175,6 +175,7 @@ create policy "No direct user access to stripe_events"
 -- ── orders ──
 create table if not exists public.orders (
   id                    uuid primary key default uuid_generate_v4(),
+  user_id               uuid references public.profiles(id) on delete set null,
   email                 text not null,
   business_name         text not null,
   business_type         text not null,

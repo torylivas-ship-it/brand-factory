@@ -1,6 +1,6 @@
 import uuid
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -9,8 +9,11 @@ from pydantic import BaseModel
 from services.supabase_service import get_supabase_admin
 from services import stripe_service
 from middleware.auth_guard import get_current_user_optional
+from services.workframe_brains import create_brain_from_ops_order
 
 router = APIRouter()
+
+SETUP_LINK_WINDOW = timedelta(hours=2)
 
 VALID_AUTOMATIONS = (
     "booking_reminders",
@@ -86,7 +89,8 @@ async def create_ops_order(
             "amount_paid": 0,
             "paid_at": datetime.now(timezone.utc).isoformat(),
         })
-        supabase.table("ops_orders").insert(ops_row).execute()
+        inserted = supabase.table("ops_orders").insert(ops_row).execute()
+        create_brain_from_ops_order(supabase, inserted.data[0])
         return {"ops_order_id": ops_order_id, "checkout_url": None, "free": True}
 
     supabase.table("ops_orders").insert(ops_row).execute()
@@ -114,4 +118,17 @@ async def get_ops_order(ops_order_id: str):
     order = supabase.table("ops_orders").select("*").eq("id", ops_order_id).maybe_single().execute()
     if not order or not order.data:
         raise HTTPException(status_code=404, detail="Ops order not found")
-    return {"ops_order": order.data}
+
+    # The success page hands the owner their private Workframe setup link —
+    # but only shortly after payment. The ops order id lives in URLs and
+    # admin views; it must not work as a permanent key to the client's
+    # Workframe. After the window, the owner uses the emailed link or signs in.
+    workframe = None
+    paid_at = order.data.get("paid_at")
+    if order.data["status"] == "active" and paid_at:
+        paid = datetime.fromisoformat(paid_at.replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) - paid < SETUP_LINK_WINDOW:
+            brain = supabase.table("wf_brains").select("id, manage_token").eq("ops_order_id", ops_order_id).maybe_single().execute()
+            if brain and brain.data:
+                workframe = {"brain_id": brain.data["id"], "manage_token": brain.data["manage_token"]}
+    return {"ops_order": order.data, "workframe": workframe}

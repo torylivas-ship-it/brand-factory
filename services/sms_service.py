@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import hmac
 import os
 import httpx
 
@@ -46,3 +49,15 @@ async def send_sms(to: str, body: str) -> dict:
         )
     response.raise_for_status()
     return response.json()
+
+
+def twilio_signature_valid(url: str, params: dict, signature: str | None) -> bool:
+    """Twilio's documented X-Twilio-Signature scheme: base64(HMAC-SHA1(
+    auth_token, full_url + each POST param name+value, sorted by name)).
+    `url` must be the exact public URL Twilio posted to."""
+    token = os.getenv("TWILIO_AUTH_TOKEN")
+    if not token or not signature:
+        return False
+    payload = url + "".join(f"{k}{params[k]}" for k in sorted(params))
+    expected = base64.b64encode(hmac.new(token.encode(), payload.encode(), hashlib.sha1).digest()).decode()
+    return hmac.compare_digest(expected, signature)
