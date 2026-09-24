@@ -2,6 +2,7 @@ import os
 import secrets
 
 from services.email_service import send_email
+from services.ops_plans import PLANS
 from services.workframe_templates import template, vertical_for
 
 
@@ -39,8 +40,11 @@ def create_brain_from_ops_order(sb, ops_order: dict) -> dict:
     if existing and existing.data:
         return existing.data
 
+    plan = ops_order.get("plan") or "founding"
     return create_brain(sb, {
         "ops_order_id": ops_order["id"],
+        "plan": plan,
+        "monthly_text_cap": PLANS.get(plan, PLANS["founding"])["text_cap"],
         "user_id": ops_order.get("user_id"),
         "business_name": ops_order["business_name"],
         "business_type": ops_order["business_type"],

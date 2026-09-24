@@ -547,6 +547,9 @@ async def brain_summary(days: int = 30, access: tuple = Depends(brain_access)):
         "followups_sent": sent("lead_followup"),
         "scheduled_upcoming": sum(1 for j in jobs if j["status"] == "scheduled"),
         "failed_sends": sum(1 for j in jobs if j["status"] == "failed"),
+        "plan": brain.get("plan", "founding"),
+        "texts_used_this_month": engine.texts_sent_this_month(sb, brain["id"]),
+        "text_cap": brain.get("monthly_text_cap") or 500,
     }
 
 

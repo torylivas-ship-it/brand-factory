@@ -93,18 +93,24 @@ def create_ops_checkout_session(
     email: str,
     success_url: str,
     cancel_url: str,
+    plan: str = "founding",
 ) -> stripe.checkout.Session:
-    """BFN Ops: $149 setup due now, $49/mo starting after a 30-day setup
-    window — same one-time-plus-recurring-subscription shape as Agency
-    Ongoing, just against BFN Ops's own prices and its own product metadata
-    so the webhook can route it to ops_orders instead of orders."""
+    """BFN Ops: plan's setup fee due now, plan's monthly fee starting after a
+    30-day setup window — same one-time-plus-recurring-subscription shape as
+    Agency Ongoing, with its own product metadata so the webhook can route it
+    to ops_orders instead of orders. Prices per plan: services/ops_plans.py."""
+    from services.ops_plans import PLANS
+
     _init()
-    setup_price_id = os.getenv("STRIPE_PRICE_OPS_SETUP")
-    monthly_price_id = os.getenv("STRIPE_PRICE_OPS_MONTHLY")
+    if plan not in PLANS:
+        raise ValueError(f"Unknown BFN Ops plan: {plan}")
+    setup_env, monthly_env = PLANS[plan]["setup_price_env"], PLANS[plan]["monthly_price_env"]
+    setup_price_id = os.getenv(setup_env)
+    monthly_price_id = os.getenv(monthly_env)
     if not setup_price_id:
-        raise RuntimeError("Env var STRIPE_PRICE_OPS_SETUP is not set")
+        raise RuntimeError(f"Env var {setup_env} is not set")
     if not monthly_price_id:
-        raise RuntimeError("Env var STRIPE_PRICE_OPS_MONTHLY is not set")
+        raise RuntimeError(f"Env var {monthly_env} is not set")
 
     return stripe.checkout.Session.create(
         customer_email=email,
@@ -116,9 +122,9 @@ def create_ops_checkout_session(
         mode="subscription",
         subscription_data={
             "trial_period_days": RECURRING_TRIAL_DAYS,
-            "metadata": {"ops_order_id": ops_order_id, "product": "bfn_ops"},
+            "metadata": {"ops_order_id": ops_order_id, "product": "bfn_ops", "plan": plan},
         },
         success_url=success_url,
         cancel_url=cancel_url,
-        metadata={"ops_order_id": ops_order_id, "product": "bfn_ops"},
+        metadata={"ops_order_id": ops_order_id, "product": "bfn_ops", "plan": plan},
     )

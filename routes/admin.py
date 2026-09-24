@@ -7,6 +7,7 @@ from typing import Optional
 
 from middleware.auth_guard import get_current_user
 from services.supabase_service import get_supabase_admin
+from services.ops_plans import PLANS, FOUNDING_SPOTS, founding_spots_taken
 
 router = APIRouter()
 
@@ -63,13 +64,18 @@ async def get_stats(admin: dict = Depends(require_admin)):
     projects = supabase.table("projects").select("id").execute()
     exports = supabase.table("exports").select("id").execute()
 
+    # MRR by plan. Admin comp orders (amount_paid 0) aren't revenue.
     ops_active = (
         supabase.table("ops_orders")
-        .select("id", count="exact")
+        .select("plan, amount_paid")
         .eq("status", "active")
         .execute()
+    ).data or []
+    ops_active_count = len(ops_active)
+    ops_mrr = sum(
+        PLANS.get(o.get("plan") or "founding", PLANS["founding"])["monthly_usd"]
+        for o in ops_active if (o.get("amount_paid") or 0) > 0
     )
-    ops_active_count = ops_active.count or 0
 
     return {
         "total_users": len(profiles.data or []),
@@ -78,7 +84,8 @@ async def get_stats(admin: dict = Depends(require_admin)):
         "total_projects": len(projects.data or []),
         "total_exports": len(exports.data or []),
         "ops_active_count": ops_active_count,
-        "ops_mrr_usd": ops_active_count * 29,
+        "ops_mrr_usd": ops_mrr,
+        "ops_founding_spots_left": max(0, FOUNDING_SPOTS - founding_spots_taken(supabase)),
     }
 
 
